@@ -1,0 +1,23 @@
+{
+    "config": {
+      "step": {
+        "user": {
+          "title": "配置彩色开关",
+          "description": "选择要添加颜色属性的开关并配置颜色选项。",
+          "data": {
+            "switches": "开关",
+            "colors": "可用颜色",
+            "quick_toggle_window": "快速切换窗口(秒)"
+          }
+        }
+      },
+      "error": {
+        "no_switches_selected": "请至少选择一个开关",
+        "too_few_colors": "至少需要两种颜色",
+        "invalid_toggle_window": "切换窗口时间必须在0.1到5.0秒之间"
+      },
+      "abort": {
+        "already_configured": "集成已配置"
+      }
+    }
+  }

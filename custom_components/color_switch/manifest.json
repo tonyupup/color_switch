@@ -1,0 +1,13 @@
+{
+  "domain": "color_switch",
+  "name": "Color Switch",
+  "version": "1.0.0",
+  "codeowners": [
+    "@tonyupup"
+  ],
+  "documentation": "https://example.com",
+  "requirements": [],
+  "dependencies": [],
+  "iot_class": "local_polling",
+  "config_flow": true
+}
