@@ -5,10 +5,18 @@ import asyncio
 import voluptuous as vol
 
 from homeassistant.components.light import LightEntity, ColorMode, LightEntityFeature
-from homeassistant.const import STATE_ON, STATE_OFF, ATTR_ENTITY_ID, CONF_NAME
-import homeassistant.helpers.config_validation as cv
+from homeassistant.const import (
+    STATE_ON,
+    STATE_OFF,
+    ATTR_ENTITY_ID,
+    CONF_NAME,
+    SERVICE_TURN_OFF,
+    SERVICE_TURN_ON,
+    CONF_ENTITY_ID,
+)
+from homeassistant.components.switch.const import DOMAIN as SWITCH_DOMAIN
 from homeassistant.helpers.event import async_track_state_change_event
-from homeassistant.core import callback
+from homeassistant.core import callback, HomeAssistant, split_entity_id
 from .const import (
     CONF_QUICK_TOGGLE_WINDOW,
     DEFAULT_COLORS,
@@ -16,8 +24,10 @@ from .const import (
     CONF_SWITCHES,
     CONF_QUICK_TOGGLE_TIME,
 )
-from asyncio.locks import Lock
-
+from homeassistant.helpers import (
+    area_registry as ar,
+    entity_registry as er,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -31,11 +41,12 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         ThreeColorLight(
             hass=hass,
             switch_entity_id=switch_entity_id,
-            effect_index=DEFAULT_COLORS.index(current_color),
+            effect_index=DEFAULT_COLORS.index(kw["effect"]),
             quick_toggle_window=data[CONF_QUICK_TOGGLE_WINDOW],
             toggle_time=data[CONF_QUICK_TOGGLE_TIME],
+            **kw,
         )
-        for switch_entity_id, current_color in data[CONF_SWITCHES].items()
+        for switch_entity_id, kw in data[CONF_SWITCHES].items()
     )
     async_add_entities(switches)
 
@@ -45,21 +56,23 @@ class ThreeColorLight(LightEntity):
 
     def __init__(
         self,
-        hass,
+        hass: HomeAssistant,
         switch_entity_id: str,
         effect_index,
         quick_toggle_window,
         toggle_time,
+        **kwargs,
     ):
         """Initialize the light with a name and the switch entity ID."""
         self._attr_supported_features = LightEntityFeature.EFFECT
         self._hass = hass
-        self._name = f"Three Color {switch_entity_id}"
+        self._name = kwargs.get("friendly_name", f"Three Color {switch_entity_id}")
         self._switch_entity_id = switch_entity_id
         self._is_on = False
+        self._area_id = kwargs["area_id"]
         self._rotating = False
         self._last_off_time = None
-        self._attr_unique_id = f"three_color_switch_{switch_entity_id}"
+        self._attr_unique_id = f"three_color_{switch_entity_id.replace('.', '_')}"
         self._attr_effect_index = effect_index
         self._quick_toggle_window = quick_toggle_window
         self._toggle_time = toggle_time
@@ -93,7 +106,7 @@ class ThreeColorLight(LightEntity):
     @property
     def effect(self):
         """返回当前选中的效果名称。"""
-        return self._effect_list[self._effect_index] if self._is_on else None
+        return self._effect_list[self._attr_effect_index] if self._is_on else None
 
     @property
     def brightness(self):
@@ -109,7 +122,7 @@ class ThreeColorLight(LightEntity):
         if self.state == STATE_OFF:
             # 打开开关
             await self._hass.services.async_call(
-                "switch", "turn_on", {"entity_id": self._switch_entity_id}
+                SWITCH_DOMAIN, SERVICE_TURN_ON, {CONF_ENTITY_ID: self._switch_entity_id}
             )
         self._rotating = True
         original_effect_index = self._attr_effect_index
@@ -138,13 +151,15 @@ class ThreeColorLight(LightEntity):
         for i in range(press_count):
             # 关闭开关
             await self._hass.services.async_call(
-                "switch", "turn_off", {"entity_id": self._switch_entity_id}
+                SWITCH_DOMAIN,
+                SERVICE_TURN_OFF,
+                {CONF_ENTITY_ID: self._switch_entity_id},
             )
             await asyncio.sleep(self._toggle_time)  # 短暂延迟
 
             # 打开开关
             await self._hass.services.async_call(
-                "switch", "turn_on", {"entity_id": self._switch_entity_id}
+                SWITCH_DOMAIN, SERVICE_TURN_ON, {CONF_ENTITY_ID: self._switch_entity_id}
             )
 
             # 如果不是最后一次操作，等待更长时间
@@ -182,9 +197,9 @@ class ThreeColorLight(LightEntity):
         if not self._is_on:
             _LOGGER.debug("UI/Service: Turning physical switch on")
             await self._hass.services.async_call(
-                "switch",
-                "turn_on",
-                {ATTR_ENTITY_ID: self._switch_entity_id},
+                SWITCH_DOMAIN,
+                SERVICE_TURN_ON,
+                {CONF_ENTITY_ID: self._switch_entity_id},
                 blocking=True,
             )
         return None
@@ -217,6 +232,16 @@ class ThreeColorLight(LightEntity):
         if switch_state and switch_state.state == STATE_ON:
             self._is_on = True
         self.async_write_ha_state()
+        erg = er.async_get(self.hass)
+        if self._area_id:
+            erg.async_update_entity(
+                self.entity_id,
+                area_id=self._area_id,
+            )
+        erg.async_update_entity(
+            self.entity_id,
+            new_entity_id=f"light.three_color_{'_'.join(split_entity_id(self._switch_entity_id))}",
+        )
 
     @callback
     def _async_switch_changed(self, event):
@@ -243,7 +268,8 @@ class ThreeColorLight(LightEntity):
                         self._effect_list
                     )
                     _LOGGER.info(
-                        "Quick toggle: changing effect index to %d", self._attr_effect_index
+                        "Quick toggle: changing effect index to %d",
+                        self._attr_effect_index,
                     )
             self._is_on = True
 

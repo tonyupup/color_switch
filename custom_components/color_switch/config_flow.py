@@ -2,7 +2,7 @@
 
 import logging
 import voluptuous as vol
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 from homeassistant import config_entries
 from homeassistant.core import callback
 from homeassistant.helpers import (
@@ -45,8 +45,8 @@ class ColorSwitchConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     def __init__(self):
         """Initialize the config flow."""
-        self._all_switches = []  # 存储所有开关信息
-        self._selected_switches = defaultdict(str)
+        self._all_switches = OrderedDict()  # 存储所有开关信息
+        self._selected_switches = defaultdict(dict)
         self._colors = DEFAULT_COLORS
         self._quick_toggle_window = DEFAULT_QUICK_TOGGLE_WINDOW
         self._quick_toggle_time = DEFAULT_QUICK_TOGGLE_TIME
@@ -61,7 +61,6 @@ class ColorSwitchConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         area_reg = ar.async_get(self.hass)
 
         # 收集所有可用开关
-        self._all_switches = []
         for entity_id in self.hass.states.async_entity_ids("switch"):
             # 检查实体是否被禁用
             registry_entry = entity_reg.async_get(entity_id)
@@ -85,29 +84,28 @@ class ColorSwitchConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
             # 获取区域信息
             area_info = ""
+            area_id = None
             if registry_entry and registry_entry.area_id:
                 area = area_reg.async_get_area(registry_entry.area_id)
                 if area:
                     area_info = area.name
+                    area_id = area.id
 
             # 存储开关信息
-            self._all_switches.append(
-                {
-                    "entity_id": entity_id,
-                    "friendly_name": friendly_name,
-                    "device": device_info,
-                    "area": area_info,
-                }
-            )
-
+            self._all_switches[entity_id] = {
+                "friendly_name": friendly_name,
+                "device": device_info,
+                "area": area_info,
+                "area_id": area_id,
+            }
         # 按区域和设备分组排序
-        self._all_switches.sort(
-            key=lambda x: (
-                x["area"] or "未分配区域",
-                x["device"] or "未分配设备",
-                x["friendly_name"],
-            )
-        )
+        # self._all_switches.sort(
+        #     key=lambda x: (
+        #         x["area"] or "未分配区域",
+        #         x["device"] or "未分配设备",
+        #         x["friendly_name"],
+        #     )
+        # )
 
         # 计算总页数
         self._total_pages = (len(self._all_switches) + PAGE_SIZE - 1) // PAGE_SIZE
@@ -119,11 +117,12 @@ class ColorSwitchConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # 计算当前页的开关
         start_idx = self._current_page * PAGE_SIZE
         end_idx = min(start_idx + PAGE_SIZE, len(self._all_switches))
-        current_page_switches = self._all_switches[start_idx:end_idx]
+        current_page_switches = list(self._all_switches.keys())[start_idx:end_idx]
 
         # 创建开关选项列表
         switch_options = []
-        for switch in current_page_switches:
+        for entity_id in current_page_switches:
+            switch = self._all_switches[entity_id]
             # 创建详细标签
             label_parts = []
             if switch["area"]:
@@ -134,12 +133,12 @@ class ColorSwitchConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             details = f" - {' | '.join(label_parts)}" if label_parts else ""
 
             # 检查是否已选择
-            prefix = "✓ " if switch["entity_id"] in self._selected_switches else ""
+            prefix = "✓ " if entity_id in self._selected_switches else ""
 
             switch_options.append(
                 {
-                    "value": switch["entity_id"],
-                    "label": f"{prefix:<1}{switch['entity_id']:<20}{switch['friendly_name']}{details}",
+                    "value": entity_id,
+                    "label": f"{prefix:<1}{entity_id:<20}({switch['friendly_name']}{details})",
                 }
             )
 
@@ -166,7 +165,7 @@ class ColorSwitchConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             # 保存选择的开关
             self._selected_switches.update(
-                dict.fromkeys(user_input[CONF_SWITCHES], DEFAULT_COLORS[0])
+                {key: self._all_switches[key] for key in user_input[CONF_SWITCHES]}
             )
 
             action = user_input[CONF_ACTION]
@@ -236,7 +235,7 @@ class ColorSwitchConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
 
         for switch_entity_id in self._selected_switches:
-            self._selected_switches[switch_entity_id] = user_input[
+            self._selected_switches[switch_entity_id]["effect"] = user_input[
                 f"initial_color_{switch_entity_id}"
             ]
         # 创建配置项
