@@ -27,7 +27,7 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
-PAGE_SIZE = 10  # 每页显示的开关数量
+PAGE_SIZE = 20  # 每页显示的开关数量
 
 
 class ColorSwitchConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -46,7 +46,6 @@ class ColorSwitchConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def __init__(self):
         """Initialize the config flow."""
         self._all_switches = []  # 存储所有开关信息
-        self._init_colors = {}  # 存储每个开关的初始颜色
         self._selected_switches = defaultdict(str)
         self._colors = DEFAULT_COLORS
         self._quick_toggle_window = DEFAULT_QUICK_TOGGLE_WINDOW
@@ -114,12 +113,6 @@ class ColorSwitchConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._total_pages = (len(self._all_switches) + PAGE_SIZE - 1) // PAGE_SIZE
         self._current_page = 0
 
-        # 初始化每个开关的初始颜色
-        for switch in self._all_switches:
-            entity_id = switch["entity_id"]
-            if entity_id not in self._init_colors:
-                self._init_colors[entity_id] = self._colors[0] if self._colors else ""
-
         return await self.async_step_show_switches()
 
     def get_switch_selected_schema(self):
@@ -146,12 +139,12 @@ class ColorSwitchConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             switch_options.append(
                 {
                     "value": switch["entity_id"],
-                    "label": f"{prefix:<20}{switch['friendly_name']}{details}",
+                    "label": f"{prefix:<1}{switch['entity_id']:<20}{switch['friendly_name']}{details}",
                 }
             )
 
         # 创建基础Schema
-        schema = vol.Schema(
+        return vol.Schema(
             {
                 vol.Required(CONF_SWITCHES, default=[]): selector.SelectSelector(
                     selector.SelectSelectorConfig(
@@ -166,27 +159,6 @@ class ColorSwitchConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             },
         )
 
-        # 为每个开关添加颜色选项
-        color_fields = {}
-        for switch in current_page_switches:
-            entity_id = switch["entity_id"]
-            color_fields[
-                vol.Optional(
-                    f"initial_color_{entity_id}",
-                    default=self._init_colors.get(
-                        entity_id, self._colors[0] if self._colors else ""
-                    ),
-                )
-            ] = selector.SelectSelector(
-                selector.SelectSelectorConfig(
-                    options=self._colors,
-                    mode=selector.SelectSelectorMode.DROPDOWN,
-                )
-            )
-
-        # 合并Schema
-        return schema.extend(color_fields)
-
     async def async_step_show_switches(self, user_input=None):
         """Show switches for current page."""
         errors = {}
@@ -197,17 +169,7 @@ class ColorSwitchConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 dict.fromkeys(user_input[CONF_SWITCHES], DEFAULT_COLORS[0])
             )
 
-            # 保存当前页的初始颜色设置
-            for switch in self._all_switches[
-                self._current_page * PAGE_SIZE : (self._current_page + 1) * PAGE_SIZE
-            ]:
-                entity_id = switch["entity_id"]
-                color_key = f"initial_color_{entity_id}"
-                if color_key in user_input:
-                    self._init_colors[entity_id] = user_input[color_key]
-
             action = user_input[CONF_ACTION]
-
             if action == ACTION_PREV:
                 if self._current_page > 0:
                     self._current_page -= 1
@@ -242,11 +204,24 @@ class ColorSwitchConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 ): vol.All(vol.Coerce(float), vol.Range(min=0.1, max=5.0)),
             }
         )
+
+        # 为每个开关添加颜色选项
+        color_schema = {}
+        for entity_id in self._selected_switches:
+            color_schema[
+                vol.Optional(f"initial_color_{entity_id}", default=self._colors[0])
+            ] = selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=self._colors,
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                )
+            )
         if user_input is None:
             # 第一次显示配置选项
             return self.async_show_form(
                 step_id="configure_options",
-                data_schema=schema,
+                last_step=True,
+                data_schema=schema.extend(color_schema),
             )
 
         # 处理用户输入
@@ -260,8 +235,10 @@ class ColorSwitchConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors=errors,
             )
 
-        for switch in self._selected_switches:
-            self._selected_switches[switch] = self._init_colors[switch]
+        for switch_entity_id in self._selected_switches:
+            self._selected_switches[switch_entity_id] = user_input[
+                f"initial_color_{switch_entity_id}"
+            ]
         # 创建配置项
         config_data = {
             CONF_SWITCHES: self._selected_switches,
